@@ -7,7 +7,33 @@ use colored::Colorize;
 use mercury::internal::object::commit::Commit;
 
 use crate::command::load_object;
-
+/*
+#不加引用点参数，就从HEAD创建分支
+libra branch n6
+#从指定引用或者地址创建分支，但是不会切换过去
+libra branch n4 746b
+#创建分支的时候，只要引用点能识别即可，不管是分支名，commit点
+root@yyjeqhc:~/libtest# libra branch n5 master
+#不带任何参数，默认就是列举出所有分支
+root@yyjeqhc:~/libtest# libra branch (-l)
+  hello
+  master
+  n1
+  n2
+* n3
+  n4
+  n5
+#查看当前HEAD所在分支或者分离点
+root@yyjeqhc:~/libtest# libra branch --show-current
+n3
+root@yyjeqhc:~/libtest# libra branch --show-current
+HEAD detached at 6cf7f1da
+#删除某个分支
+libra branch -D n5
+*/
+/*
+尚不明确设置上游和展示上游分支
+*/
 #[derive(Parser, Debug)]
 pub struct BranchArgs {
     /// new branch name
@@ -86,7 +112,7 @@ pub async fn set_upstream(branch: &str, upstream: &str) {
         branch, upstream
     );
 }
-
+///从某个引用点创建分支，可以是分支名，也可以是commit点
 pub async fn create_branch(new_branch: String, branch_or_commit: Option<String>) {
     tracing::debug!("create branch: {} from {:?}", new_branch, branch_or_commit);
 
@@ -101,6 +127,7 @@ pub async fn create_branch(new_branch: String, branch_or_commit: Option<String>)
         panic!("fatal: A branch named '{}' already exists.", new_branch);
     }
 
+    // 找不到提交，就应该失败
     let commit_id = match branch_or_commit {
         Some(branch_or_commit) => {
             let commit = get_target_commit(&branch_or_commit).await;
@@ -117,6 +144,7 @@ pub async fn create_branch(new_branch: String, branch_or_commit: Option<String>)
     tracing::debug!("base commit_id: {}", commit_id);
 
     // check if commit_hash exists
+    // 这里还有必要再加载嘛，会有失败的情况吗
     let _ = load_object::<Commit>(&commit_id)
         .unwrap_or_else(|_| panic!("fatal: not a valid object name: '{}'", commit_id));
 
@@ -124,6 +152,7 @@ pub async fn create_branch(new_branch: String, branch_or_commit: Option<String>)
     Branch::update_branch(&new_branch, &commit_id.to_string(), None).await;
 }
 
+///删除指定分支，如果HEAD在这个分支上，就失败
 async fn delete_branch(branch_name: String) {
     let _ = Branch::find_branch(&branch_name, None)
         .await
@@ -141,7 +170,7 @@ async fn delete_branch(branch_name: String) {
 
     Branch::delete_branch(&branch_name, None).await;
 }
-
+///查看当前HEAD所在分支或者分离
 async fn show_current_branch() {
     // let head = reference::Model::current_head(&db).await.unwrap();
     let head = Head::current().await;
@@ -154,7 +183,7 @@ async fn show_current_branch() {
         }
     }
 }
-
+///列举本地或远程的分支，和当前分支名称一样的会显示绿色
 pub async fn list_branches(remotes: bool) {
     let branches = match remotes {
         true => {

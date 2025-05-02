@@ -93,11 +93,12 @@ impl SHA1 {
     pub const SIZE: usize = 20;
 
     /// Calculate the SHA-1 hash of the byte slice, then create a Hash value
+    /// 会计算字节数组的hash值，然后创建一个Hash值
     pub fn new(data: &[u8]) -> SHA1 {
         let h = sha1::Sha1::digest(data);
         SHA1::from_bytes(h.as_slice())
     }
-
+    ///类型+空格+长度+0+数据
     pub fn from_type_and_data(object_type: ObjectType, data: &[u8]) -> SHA1 {
         let mut d: Vec<u8> = Vec::new();
         d.extend(object_type.to_data().unwrap());
@@ -109,6 +110,7 @@ impl SHA1 {
     }
 
     /// Create Hash from a byte array, which is a 20-byte array already calculated
+    /// 从一个计算过的hash值创建一个Hash值
     pub fn from_bytes(bytes: &[u8]) -> SHA1 {
         let mut h = SHA1::default();
         h.0.copy_from_slice(bytes);

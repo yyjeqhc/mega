@@ -16,6 +16,7 @@ pub enum Head {
 }
 
 impl Head {
+    /// 就是数据库里面找，很快了
     async fn query_local_head() -> reference::Model {
         let db_conn = get_db_conn_instance().await;
         reference::Entity::find()
@@ -27,6 +28,7 @@ impl Head {
             .expect("fatal: storage broken, HEAD not found")
     }
 
+    ///同理，需要远程的名称
     async fn query_remote_head(remote: &str) -> Option<reference::Model> {
         let db_conn = get_db_conn_instance().await;
         reference::Entity::find()
@@ -37,6 +39,7 @@ impl Head {
             .unwrap()
     }
 
+    ///返回HEAD当前所在的位置，查数据库得来
     pub async fn current() -> Head {
         let head = Self::query_local_head().await;
         match head.name {
@@ -49,6 +52,8 @@ impl Head {
         }
     }
 
+    ///暂时好像没办法切换到远程分支，然后进行分离
+    ///查数据库
     pub async fn remote_current(remote: &str) -> Option<Head> {
         match Self::query_remote_head(remote).await {
             Some(head) => match head.name {
@@ -65,6 +70,7 @@ impl Head {
     }
 
     /// get the commit hash of the current head, return `None` if no commit
+    /// 获取当前提交的hash值，不管是分离HEAD还是分支
     pub async fn current_commit() -> Option<SHA1> {
         match Self::current().await {
             Head::Detached(commit_hash) => Some(commit_hash),
@@ -76,6 +82,7 @@ impl Head {
     }
 
     // HEAD is unique, update if exists, insert if not
+    /// 更新本地HEAD或某个远程的HEAD到分离或分支
     pub async fn update(new_head: Self, remote: Option<&str>) {
         let db_conn = get_db_conn_instance().await;
 
@@ -83,6 +90,21 @@ impl Head {
             Some(remote) => Self::query_remote_head(remote).await,
             None => Some(Self::query_local_head().await),
         };
+        //远程的情况，pull
+        //new_head Branch("master")
+        //remote Some("origin")
+
+        //本地的情况，创建新的分支
+        /*
+        root@daaff34f8b05:/opt/cloudbeaver/t# libra checkout -b b1
+        new_head Branch("b1")
+        remote None
+        Switched to a new branch 'b1'
+        切换分支
+        Switched to branch 'master'
+        new_head Branch("master")
+        remote None
+         */
         match head {
             Some(head) => {
                 // update
@@ -102,6 +124,7 @@ impl Head {
                 }
                 head.update(db_conn).await.unwrap();
             }
+            //插入的，必然是远程
             None => {
                 // // insert
                 let mut head = reference::ActiveModel {

@@ -72,7 +72,7 @@ pub async fn mount_filesystem<F: Filesystem + std::marker::Sync + Send + 'static
     let mut mount_options = MountOptions::default();
     // .allow_other(true)
     mount_options.force_readdir_plus(true).uid(uid).gid(gid);
-
+    println!("{:?}", mount_path);
     Session::<F>::new(mount_options)
         .mount_with_unprivileged(fs, mount_path)
         .await

@@ -2,6 +2,13 @@ use crate::internal::config::Config;
 use clap::Subcommand;
 
 #[derive(Subcommand, Debug)]
+/*
+libra remote remove origin
+remote.origin.url=baidu
+remote.origin.url=google
+remote.origin.url=sogou
+这样，就删除完了
+*/
 pub enum RemoteCmds {
     /// Add a remote
     Add {

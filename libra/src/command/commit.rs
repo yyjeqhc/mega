@@ -26,7 +26,7 @@ pub struct CommitArgs {
     #[arg(long)]
     pub allow_empty: bool,
 
-    /// check if the commit message follows conventional commits
+    /// check if commit message follows conventional commits
     #[arg(long, requires("message"))]
     pub conventional: bool,
 
@@ -49,11 +49,14 @@ pub async fn execute(args: CommitArgs) {
 
     /* Create tree */
     let tree = create_tree(&index, &storage, "".into()).await;
-
+    // println!("Tree {:?}",&tree.id.to_string()[..8]);
+    // for item in tree.tree_items.iter() {
+    //     println!("TreeItem {:?}",item);
+    // }
     /* Create & save commit objects */
     let parents_commit_ids = get_parents_ids().await;
 
-    // Amend commits are only supported for a single parent commit.
+    //add amend commit,only support single parent commit
     if args.amend {
         if parents_commit_ids.len() > 1 {
             panic!("fatal: --amend is not supported for merge commits with multiple parents");
@@ -104,7 +107,7 @@ pub async fn create_tree(index: &Index, storage: &ClientStorage, current_root: P
         let name = util::path_to_string(path);
         let mete = index.get(&name, 0).unwrap();
         let filename = path.file_name().unwrap().to_str().unwrap().to_string();
-
+        // println!("get_blob_entry name {:?} {:?} {:?}",name,mete.name,filename);
         TreeItem {
             name: filename,
             mode: TreeItemMode::tree_item_type_from_bytes(format!("{:o}", mete.mode).as_bytes())
@@ -115,21 +118,33 @@ pub async fn create_tree(index: &Index, storage: &ClientStorage, current_root: P
 
     let mut tree_items: Vec<TreeItem> = Vec::new();
     let mut processed_path: HashSet<String> = HashSet::new();
+    // println!("current_root {:?}",current_root);
     let path_entries: Vec<PathBuf> = index
         .tracked_entries(0)
         .iter()
-        .map(|file| PathBuf::from(file.name.clone()))
+        .map(|file| {
+            // println!("iter {:?}",file.name.clone());
+            PathBuf::from(file.name.clone())
+        })
         .filter(|path| path.starts_with(&current_root))
         .collect();
+    // println!("len {:?}",path_entries.len());
     for path in path_entries.iter() {
+        // println!("loop {:?}",path);
         let in_current_path = path.parent().unwrap() == current_root;
         if in_current_path {
+            // println!("in_current {:?}",path.parent());
             let item = get_blob_entry(path);
             tree_items.push(item);
         } else {
+            // println!("com {:?}",path.components().count());
             if path.components().count() == 1 {
                 continue;
             }
+            // println!("current.count {:?}",current_root.components().count());
+            // for path in path.components() {
+            //     println!("path {:?}",path);
+            // }
             // next level tree
             let process_path = path
                 .components()
@@ -142,6 +157,7 @@ pub async fn create_tree(index: &Index, storage: &ClientStorage, current_root: P
             if processed_path.contains(process_path) {
                 continue;
             }
+            // println!("process_path {:?}",process_path);
             processed_path.insert(process_path.to_string());
 
             let sub_tree = Box::pin(create_tree(
@@ -239,20 +255,20 @@ mod test {
     /// Verifies that tree objects are correctly created, saved to storage, and properly organized in a hierarchical structure.
     async fn test_create_tree() {
         let temp_path = tempdir().unwrap();
-        setup_with_new_libra_in(temp_path.path()).await;
+        test::setup_with_new_libra_in(temp_path.path()).await;
         let _guard = ChangeDirGuard::new(temp_path.path());
 
         let crate_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let index = Index::from_file(crate_path.join("../tests/data/index/index-760")).unwrap();
-        println!("{:?}", index.tracked_entries(0).len());
+        // println!("test_create_tree len {:?}", index.tracked_entries(0).len());
         let storage = ClientStorage::init(path::objects());
-        let tree = create_tree(&index, &storage, temp_path.keep()).await;
-
+        let tree = create_tree(&index, &storage, temp_path.into_path()).await;
+        // println!("create {:?}",&tree.id.to_string()[..8]);
         assert!(storage.get(&tree.id).is_ok());
         for item in tree.tree_items.iter() {
+            // println!("treeItem {:?}",item);
             if item.mode == TreeItemMode::Tree {
                 assert!(storage.get(&item.id).is_ok());
-                // println!("tree: {}", item.name);
                 if item.name == "DeveloperExperience" {
                     let sub_tree = storage.get(&item.id).unwrap();
                     let tree = Tree::from_bytes(&sub_tree, item.id).unwrap();
@@ -261,4 +277,71 @@ mod test {
             }
         }
     }
+    
 }
+/*
+current_root ""
+iter "1.txt"
+iter "1/3/hh.txt"
+iter "1/hello.txt"
+iter "2.txt"
+len 4
+loop "1.txt"
+in_current Some("")
+get_blob_entry name "1.txt" "1.txt" "1.txt"
+loop "1/3/hh.txt"
+com 3
+current.count 0
+path Normal("1")
+path Normal("3")
+path Normal("hh.txt")
+process_path "1"
+current_root "1"
+iter "1.txt"
+iter "1/3/hh.txt"
+iter "1/hello.txt"
+iter "2.txt"
+len 2
+loop "1/3/hh.txt"
+com 3
+current.count 1
+path Normal("1")
+path Normal("3")
+path Normal("hh.txt")
+process_path "3"
+current_root "1/3"
+iter "1.txt"
+iter "1/3/hh.txt"
+iter "1/hello.txt"
+iter "2.txt"
+len 1
+loop "1/3/hh.txt"
+in_current Some("1/3")
+get_blob_entry name "1/3/hh.txt" "1/3/hh.txt" "hh.txt"
+loop "1/hello.txt"
+in_current Some("1")
+get_blob_entry name "1/hello.txt" "1/hello.txt" "hello.txt"
+loop "1/hello.txt"
+com 2
+current.count 0
+path Normal("1")
+path Normal("hello.txt")
+loop "2.txt"
+in_current Some("")
+get_blob_entry name "2.txt" "2.txt" "2.txt"
+Tree "6475f98e"
+TreeItem TreeItem { mode: Blob, id: SHA1([59, 24, 229, 18, 219, 167, 158, 76, 131, 0, 221, 8, 174, 179, 127, 142, 114, 139, 141, 173]), name: "1.txt" }
+TreeItem TreeItem { mode: Tree, id: SHA1([171, 235, 220, 248, 241, 129, 6, 226, 196, 16, 43, 98, 40, 101, 112, 214, 59, 53, 196, 128]), name: "1" }
+TreeItem TreeItem { mode: Blob, id: SHA1([5, 162, 127, 164, 139, 147, 66, 220, 120, 126, 26, 30, 18, 186, 243, 168, 1, 152, 190, 25]), name: "2.txt" }
+root@yyjeqhc:~/tmp/t# tree
+.
+├── 1
+│   ├── 3
+│   │   └── hh.txt
+│   └── hello.txt
+├── 1.txt
+└── 2.txt
+
+3 directories, 4 files
+
+*/

@@ -27,12 +27,14 @@ pub const ATTRIBUTES: &str = ".libra_attributes";
 /// # Returns
 ///
 /// A `PathBuf` representing the current working directory.
+/// 返回工作目录
 pub fn cur_dir() -> PathBuf {
     env::current_dir().unwrap()
 }
 
 /// Try to get the storage path of the repository, which is the path of the `.libra` directory
 /// - if the current directory or given path is not a repository, return an error
+/// 从当前工作目录或者指定目录进行搜索.libra目录，直到根目录
 pub fn try_get_storage_path(path: Option<PathBuf>) -> Result<PathBuf, io::Error> {
     let mut path = path.clone().unwrap_or_else(cur_dir);
     let orig = path.clone();
@@ -51,11 +53,13 @@ pub fn try_get_storage_path(path: Option<PathBuf>) -> Result<PathBuf, io::Error>
 }
 
 /// Load the storage path with optional given repository
+/// 返回.libra里面的路径
 pub fn storage_path() -> PathBuf {
     try_get_storage_path(None).unwrap()
 }
 
 /// Check if libra repo exists
+/// 判断有没有.libra目录
 pub fn check_repo_exist() -> bool {
     if try_get_storage_path(None).is_err() {
         eprintln!("fatal: not a libra repository (or any of the parent directories): .libra");
@@ -298,6 +302,7 @@ pub async fn get_commit_base(commit_base: &str) -> Result<SHA1, String> {
 
     let commits = storage.search(commit_base).await;
     if commits.is_empty() {
+        println!("empty is what");
         return Err(format!("fatal: invalid reference: {}", commit_base));
     } else if commits.len() > 1 {
         return Err(format!("fatal: ambiguous argument: {}", commit_base));

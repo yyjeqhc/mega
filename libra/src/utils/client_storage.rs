@@ -28,6 +28,7 @@ static PACK_OBJ_CACHE: Lazy<Mutex<LruCache<String, CacheObject>>> = Lazy::new(||
 });
 
 #[derive(Default)]
+///.libra/objects文件夹进行操作
 pub struct ClientStorage {
     base_path: PathBuf,
 }
@@ -35,12 +36,14 @@ pub struct ClientStorage {
 impl ClientStorage {
     /// create `base_path` directory
     /// - `base_path` should be ".../objects"
+    /// 一般是.libra/objects
     pub fn init(base_path: PathBuf) -> ClientStorage {
         fs::create_dir_all(&base_path).expect("Create directory failed!");
         ClientStorage { base_path }
     }
 
     /// e.g. 6ae8a755... -> 6a/e8a755...
+    ///objectes文件夹下面，以40位hash字符串，前两位作为文件夹名，后38位作为文件名
     fn transform_path(&self, hash: &SHA1) -> String {
         let hash = hash.to_string();
         Path::new(&hash[0..2])
@@ -51,10 +54,11 @@ impl ClientStorage {
     }
 
     /// join `base_path` and `obj_id` to get the full path of the object
+    /// 给定hash值，返回对象完整的路径
     fn get_obj_path(&self, obj_id: &SHA1) -> PathBuf {
         Path::new(&self.base_path).join(self.transform_path(obj_id))
     }
-
+    ///给定hash值，返回对象的ObjectType类型
     pub fn get_object_type(&self, obj_id: &SHA1) -> Result<ObjectType, GitError> {
         if self.exist_loosely(obj_id) {
             let raw_data = self.read_raw_data(obj_id)?;
@@ -69,6 +73,7 @@ impl ClientStorage {
     }
 
     /// Check if the object with `obj_id` is of type `obj_type`
+    /// 给定hash值，判断对象的类型是否为obj_type
     pub fn is_object_type(&self, obj_id: &SHA1, obj_type: ObjectType) -> bool {
         match self.get_object_type(obj_id) {
             Ok(t) => t == obj_type,
@@ -226,7 +231,77 @@ impl ClientStorage {
         Ok(commit.parent_commit_ids[n - 1])
     }
 
+    /// 解析 HEAD 相关的引用，如 HEAD, HEAD^, HEAD~3, HEAD^2~3 等
+    #[allow(dead_code)]
+    async fn parse_head_reference_old(&self, reference: &str) -> Result<SHA1, GitError> {
+        let mut current = Head::current_commit().await.unwrap();
+
+        // 如果只是 "HEAD"，直接返回
+        if reference == "HEAD" {
+            return Ok(current);
+        }
+
+        // 解析剩余的路径表达式
+        let path = &reference[4..]; // 跳过 "HEAD" 四个字符
+        let mut chars = path.chars();
+        if reference == "HEAD^10" {
+            println!("reference is {:?}", reference);
+        }
+        while let Some(c) = chars.next() {
+            match c {
+                '^' => {
+                    // 处理 ^ 语法，如 HEAD^ 或 HEAD^2 或 HEAD^10
+                    let mut parent_num = 1; // 默认为第一个父提交
+
+                    // 检查下一个字符是否是数字
+                    let mut is_digit = false;
+
+                    // 收集所有连续的数字字符
+                    while let Some(num_char) = chars.next() {
+                        if num_char.is_ascii_digit() {
+                            is_digit = true;
+                            parent_num = parent_num * 10 + num_char.to_digit(10).unwrap() as usize;
+                        } else {
+                            // 不是数字，回退一个字符，结束数字解析
+                            // 注意：这里原本的 chars.next() 是错误的，应该用 chars.next_back()
+                            // 但 Chars 迭代器不支持 next_back()，所以我们需要一个不同的方案
+                            break;
+                        }
+                    }
+
+                    // 获取指定的父提交
+                    current = self.get_parent_commit(&current, parent_num)?;
+                }
+                '~' => {
+                    // 处理 ~ 语法，如 HEAD~3
+                    let mut num_steps = 0;
+                    while let Some(num_char) = chars.next() {
+                        if num_char.is_ascii_digit() {
+                            num_steps = num_steps * 10 + num_char.to_digit(10).unwrap() as usize;
+                        } else {
+                            chars.next(); // 回退一个字符
+                            break;
+                        }
+                    }
+
+                    if num_steps == 0 {
+                        num_steps = 1; // 默认为1步
+                    }
+
+                    // 遍历 n 个第一父提交
+                    for _ in 0..num_steps {
+                        current = self.get_parent_commit(&current, 1)?;
+                    }
+                }
+                _ => return Err(GitError::InvalidArgument("not a valid char".into())), // 处理无效的字符
+            }
+        }
+
+        Ok(current)
+    }
+
     /// list all objects' hash in `objects`
+    /// 获取objects文件夹下所有对象的hash值，不包括info和pack文件夹
     fn list_objects_loose(&self) -> Vec<SHA1> {
         let mut objects = Vec::new();
         let paths = fs::read_dir(&self.base_path).unwrap();
@@ -279,6 +354,7 @@ impl ClientStorage {
         Ok(decompressed_data)
     }
 
+    ///对象的写入方式都是 (类型_str +空格 + 数据长度_str)Head + '\0' + 数据_bytes
     fn parse_header(data: &[u8]) -> (String, usize, usize) {
         let end_of_header = data
             .iter()
@@ -294,7 +370,7 @@ impl ClientStorage {
         assert_eq!(size, data.len() - 1 - end_of_header, "Invalid object size");
         (obj_type, size, end_of_header)
     }
-
+    ///给定hash值，读取对象的原始数据
     fn read_raw_data(&self, obj_id: &SHA1) -> Result<Vec<u8>, io::Error> {
         let path = self.get_obj_path(obj_id);
         let mut file = fs::File::open(path)?;
@@ -303,6 +379,7 @@ impl ClientStorage {
         Ok(buffer)
     }
 
+    ///给定hash值，返回对象解压后的数据
     pub fn get(&self, object_id: &SHA1) -> Result<Vec<u8>, GitError> {
         if self.exist_loosely(object_id) {
             let raw_data = self.read_raw_data(object_id)?;
@@ -320,6 +397,8 @@ impl ClientStorage {
     }
 
     /// Save content to `objects`
+    /// 传入hash值，作为保存路径
+    /// 然后就是 类型 + 空格 + 数据长度 + '\0' + 数据，最后再压缩，然后写入数据 
     pub fn put(
         &self,
         obj_id: &SHA1,
@@ -345,6 +424,7 @@ impl ClientStorage {
     }
 
     /// Check if the object with `obj_id` exists in `objects`
+    /// 给定hash值，判断有没有那个对象文件
     fn exist_loosely(&self, obj_id: &SHA1) -> bool {
         let path = self.get_obj_path(obj_id);
         Path::exists(&path)
@@ -354,6 +434,7 @@ const FANOUT: u64 = 256 * 4;
 // TODO refactor to `PackReader`
 impl ClientStorage {
     /// List all .pack files in `pack` directory
+    /// 获取.libra/objects/pack目录下所有的.pack文件
     fn list_all_packs(&self) -> Vec<PathBuf> {
         let pack_dir = self.base_path.join("pack");
         if !pack_dir.exists() {
@@ -371,6 +452,7 @@ impl ClientStorage {
 
     /// List all .idx files in `pack` directory
     /// - If .idx file not exists, build it
+    /// 每个.pack文件也对应一个idx文件，返回所有.idx文件的路径，实际还是在pack文件夹
     fn list_all_idx(&self) -> Vec<PathBuf> {
         let packs = self.list_all_packs();
         let mut idxs = Vec::new();
@@ -397,7 +479,42 @@ impl ClientStorage {
 
         Ok(None)
     }
+    /*
+    GitHub Copilot
+    read_idx_fanout 函数解析
+    read_idx_fanout 函数是 Git 索引文件（.idx）解析的核心部分，它读取 Git 包索引文件的扇出表（fanout table）。这个函数的作用如下：
 
+    功能说明
+    该函数从 Git 索引文件（.idx）中读取扇出表，这是一个包含 256 个条目的数组，用于加速对象查找。每个条目是一个 4 字节的无符号整数（u32），按大端字节序存储。
+
+    实现细节
+    打开索引文件：函数接收一个索引文件路径参数，并打开该文件进行读取。
+
+    准备数据结构：创建一个 256 个元素的 u32 数组来存储扇出表条目。
+
+    读取数据：使用迭代器遍历数组中的每个元素位置，每次：
+
+    读取 4 字节到缓冲区
+    将这 4 字节解析为大端序的 u32 值
+    将该值存入数组对应位置
+    返回结果：返回填充好的扇出表数组
+
+    扇出表的作用
+    扇出表是 Git 存储中的一种优化结构，它允许 Git 快速定位特定对象：
+
+    表中的每个项表示特定对象 SHA-1 哈希前缀（第一个字节）的累积计数
+    例如，索引中第 0x61 ('a') 位置的值表示哈希值第一个字节小于或等于 'a' 的对象数量
+    这使得 Git 可以根据对象哈希的第一个字节，快速确定需要在索引中搜索的范围，而不是线性扫描整个索引
+    这种扇出表结构极大提高了对象查找的效率，尤其是在存储库包含大量对象时。
+
+    代码中的应用
+    在后续的 read_idx 和 list_idx_objects 函数中，通过利用这个扇出表，可以快速：
+
+    找到特定哈希值对象在 pack 文件中的偏移量位置
+    列出所有包含在这个索引文件中的对象
+    这是 Git 存储系统高效性的关键部分之一。
+
+     */
     fn read_idx_fanout(idx_file: &Path) -> Result<[u32; 256], io::Error> {
         let mut idx_file = fs::File::open(idx_file)?;
         // const FANOUT: usize = 256 * 4;
@@ -466,6 +583,7 @@ impl ClientStorage {
     }
 
     /// Read object from pack file, with offset
+    /// LRU缓存是 文件名-偏移作为key进行查找？
     fn read_pack_obj(pack_file: &Path, offset: u64) -> Result<CacheObject, GitError> {
         let cache_key = format!("{:?}-{}", pack_file.file_name().unwrap(), offset);
         // read cache
@@ -477,6 +595,7 @@ impl ClientStorage {
         let mut pack_reader = io::BufReader::new(&file);
         pack_reader.seek(io::SeekFrom::Start(offset))?;
         let mut pack = Pack::new(None, None, None, false);
+        //从文件里面读取缓存？
         let obj = {
             let mut offset = offset as usize;
             pack.decode_pack_object(&mut pack_reader, &mut offset)? // offset will be updated!

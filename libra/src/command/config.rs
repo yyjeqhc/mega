@@ -3,6 +3,20 @@ use clap::Parser;
 use crate::internal::config;
 
 #[derive(Parser, Debug)]
+/// libra config --add remote.origin.url http://localhost:58001/third-part/lfs.git
+/// libra config  --unset remote.origin.master  google
+/*
+root@daaff34f8b05:/opt/cloudbeaver/t# libra config --add remote.origin.master google.ko
+root@daaff34f8b05:/opt/cloudbeaver/t# libra config --add remote.origin.master google.xigua
+root@daaff34f8b05:/opt/cloudbeaver/t# libra config --add remote.origin.master google.nihao
+root@daaff34f8b05:/opt/cloudbeaver/t# libra config -l
+remote.origin.master=https://google
+remote.origin.master=google.ko
+remote.origin.master=google.xigua
+remote.origin.master=google.nihao
+直接全部清空了
+libra config  --unset-all remote.origin.master  google
+*/
 pub struct ConfigArgs {
     /// Add a configuration entry to database
     #[clap(long, group("mode"), requires("valuepattern"))]
@@ -177,6 +191,7 @@ async fn get_all_config(key: &Key, default: Option<&str>, valuepattern: Option<&
 }
 
 /// Remove one configuration by given key and value pattern
+/// 删除匹配的一项配置，或者不匹配，删除第一个
 async fn unset_config(key: &Key, valuepattern: Option<&str>) {
     config::Config::remove_config(
         &key.configuration,
@@ -189,6 +204,7 @@ async fn unset_config(key: &Key, valuepattern: Option<&str>) {
 }
 
 /// Remove all configurations by given key and value pattern
+/// 删除所有匹配的配置，或不匹配，全部删除
 async fn unset_all_config(key: &Key, valuepattern: Option<&str>) {
     config::Config::remove_config(
         &key.configuration,

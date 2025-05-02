@@ -114,10 +114,15 @@ async fn setup(remote_repo: String, specified_branch: Option<String>) {
     // todo: temporary ignore fetch option
 
     if let Some(specified_branch) = specified_branch {
+        println!("分支1");
         setup_branch(specified_branch).await;
     } else if let Some(Head::Branch(name)) = remote_head {
+        println!("分支2");
+
         setup_branch(name).await;
     } else if let Some(Head::Detached(_)) = remote_head {
+        println!("分支3");
+
         eprintln!("fatal: remote HEAD points to a detached commit");
     } else {
         println!("warning: You appear to have cloned an empty repository.");
@@ -139,8 +144,11 @@ async fn setup_branch(branch_name: String) {
     Head::update(Head::Branch(branch_name.to_owned()), None).await;
 
     let merge = "refs/heads/".to_owned() + &branch_name;
+
     Config::insert("branch", Some(&branch_name), "merge", &merge).await;
     Config::insert("branch", Some(&branch_name), "remote", ORIGIN).await;
+    println!("before clone set ok?? {:?}", branch_name);
+    println!("before clone set merge {:?}", merge);
 
     command::restore::execute(RestoreArgs {
         worktree: true,

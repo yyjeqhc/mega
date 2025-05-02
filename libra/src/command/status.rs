@@ -25,6 +25,7 @@ impl Changes {
     }
 
     /// to relative path(to cur_dir)
+    /// 返回了新的 `Changes`，但是 `new`、`modified` 和 `deleted` 的路径都是相对于当前工作目录的
     pub fn to_relative(&self) -> Changes {
         let mut change = self.clone();
         [&mut change.new, &mut change.modified, &mut change.deleted]

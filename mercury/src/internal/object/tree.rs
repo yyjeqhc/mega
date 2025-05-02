@@ -50,7 +50,7 @@ impl Display for TreeItemMode {
         write!(f, "{}", String::from(_print).blue())
     }
 }
-
+///8进制
 impl TreeItemMode {
     /// Convert a 32-bit mode to a TreeItemType
     ///
@@ -291,6 +291,7 @@ impl ObjectTrait for Tree {
             // Find the position of the null byte (0x00)
             if let Some(index) = memchr::memchr(0x00, &data[i..]) {
                 // Calculate the next position
+                //可以确定0x00后面跟随本对象的hash值，下个item从0x00+20开始
                 let next = i + index + 21;
 
                 // Extract the bytes and create a TreeItem

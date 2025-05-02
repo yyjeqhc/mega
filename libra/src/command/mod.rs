@@ -101,6 +101,7 @@ pub fn calc_file_blob_hash(path: impl AsRef<Path>) -> io::Result<SHA1> {
 }
 
 /// Get the commit hash from branch name or commit hash, support remote branch
+/// 返回给定分支名称的最新一次提交或者给定提交的本地值，无论如何，返回查找到的hash值
 pub async fn get_target_commit(branch_or_commit: &str) -> Result<SHA1, Box<dyn std::error::Error>> {
     if branch_or_commit == HEAD {
         return Ok(Head::current_commit().await.unwrap());
@@ -113,6 +114,7 @@ pub async fn get_target_commit(branch_or_commit: &str) -> Result<SHA1, Box<dyn s
     }
 
     if possible_branches.is_empty() {
+        //本地查找提交，一般给定前缀是不会重复的，实在有的话就要求提供更详细的hash值
         let storage = util::objects_storage();
         let possible_commits = storage.search(branch_or_commit).await;
         if possible_commits.len() > 1 {

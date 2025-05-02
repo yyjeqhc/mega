@@ -36,6 +36,8 @@ pub async fn execute(args: PullArgs) {
                 let merge_args = merge::MergeArgs {
                     branch: format!("{}/{}", branch_config.remote, branch_config.merge),
                 };
+                println!("merge_args {:?}", merge_args);
+                println!("name {:?} branch_name {:?}", name, branch_config.name);
                 merge::execute(merge_args).await;
             }
             None => {

@@ -1,6 +1,7 @@
 use crate::manager::store::TempStoreArea;
 use crate::util::config;
 use add::add_and_del;
+use bytes::Bytes;
 use commit::commit_core;
 use fs_extra::dir::{copy, CopyOptions};
 use mercury::{
@@ -52,9 +53,6 @@ impl ScorpioManager {
         fs::write(file_path, content)?;
         Ok(())
     }
-
-    /// Integrate the temporary storage area files, merge
-    /// them into a Tree object and output Commit
     pub async fn mono_commit(
         &self,
         mono_path: String,
@@ -62,30 +60,33 @@ impl ScorpioManager {
     ) -> Result<Commit, Box<dyn std::error::Error>> {
         let store_path = config::store_path();
         let work_dir = self.select_work(&mono_path)?;
-        let work_path = PathBuf::from(store_path).join(work_dir.hash.clone());
-        let old_dbpath = work_path.join("tree.db");
-        let new_dbpath = work_path.join("new_tree.db");
-        let objectspath = work_path.join("objects");
-        let commitpath = work_path.join("commit");
-        let modified_path = work_path.join("modifiedstore");
-        let tempstorage_path = modified_path.join("objects");
+        let path = PathBuf::from(store_path).join(work_dir.hash.clone());
+        let old_dbpath = path.join("tree.db");
+        let new_dbpath = path.join("new_tree.db");
+        let objectspath = path.join("objects");
+        let commitpath = path.join("commit");
 
-        println!("old_dbpath = {}", old_dbpath.display());
-        println!("new_dbpath = {}", new_dbpath.display());
+        let modified_path = path.join("modifiedstore");
+        let tempstorage_path = modified_path.join("objects");
 
         let _ = fs::remove_dir_all(&objectspath);
         if tempstorage_path.exists() {
-            println!("tempstorage_path = {}, Copy", tempstorage_path.display());
             let mut options = CopyOptions::new();
             options.copy_inside = true;
             copy(&tempstorage_path, &objectspath, &options)?;
         }
 
-        let old_tree_db = sled::open(old_dbpath)?;
-        let new_tree_db = sled::open(new_dbpath)?;
+        if !new_dbpath.exists() {
+            let mut options = CopyOptions::new();
+            options.copy_inside = true;
+            copy(&old_dbpath, &new_dbpath, &options)?;
+        }
+
+        let new_db = sled::open(new_dbpath)?;
         let temp_store_area = TempStoreArea::new(&modified_path)?;
         let old_root_path = PathBuf::from(mono_path);
 
+        //
         let git_author = config::git_author();
         let git_email = config::git_email();
         let sign = Signature::new(
@@ -104,11 +105,7 @@ impl ScorpioManager {
         };
 
         println!("\x1b[34m[START]\x1b[0m");
-        let main_tree_hash = commit_core(
-            (&old_tree_db, &new_tree_db),
-            &temp_store_area,
-            &old_root_path,
-        )?;
+        let main_tree_hash = commit_core(&new_db, &temp_store_area, &old_root_path)?;
         println!("\x1b[34m[DONE]\x1b[0m");
 
         println!("   [\x1b[33mDEBUG\x1b[0m] commit.author = {}", sign.name);
@@ -154,24 +151,41 @@ impl ScorpioManager {
         Err(Box::from("WorkDir not found"))
     }
 
-    /// Pushes a commit to the remote mono repository.
     pub async fn push_commit(
         &self,
         mono_path: &str,
     ) -> Result<reqwest::Response, Box<dyn std::error::Error>> {
+        let work_dir = self.select_work(mono_path)?; // TODO : deal with error.
         let store_path = config::store_path();
-        let work_dir = self.select_work(mono_path)?;
-        let work_path = PathBuf::from(store_path).join(work_dir.hash.clone());
-        let modified_path = work_path.join("modifiedstore");
-        let temp_store_area = TempStoreArea::new(&modified_path)?;
-        println!("OK1");
-        let base_url = config::base_url();
-        let url = format!("{}/{}.git/git-receive-pack", base_url, mono_path);
+        // let mut path = store_path.to_string();
+        // path.push_str(&work_dir.hash);
+        // path.push_str("commit");
+        let path = PathBuf::from(store_path)
+            .join(&work_dir.hash)
+            .join("commit");
 
-        println!("START");
-        let res = push::push_core(&work_path, &url, &temp_store_area.index_db).await?;
-        println!("END");
-        Ok(res)
+        // check path is exist
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            eprintln!("Path does not exist: {:?}", path);
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Path does not exist: {:?}", path),
+            )));
+        }
+        // read the file as the body to send
+        let commit_data = tokio::fs::read(&path).await?;
+
+        // Send Commit data to remote mono.
+        let base_url = config::base_url();
+        let url = format!("{}/{}/git-receive-pack", base_url, mono_path);
+        let client = reqwest::Client::new();
+        client
+            .post(&url)
+            .header("Content-Type", "application/x-git-receive-pack-request")
+            .body(Bytes::from(commit_data))
+            .send()
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 
     pub fn check_before_mount(&self, mono_path: &str) -> Result<(), String> {
@@ -196,7 +210,6 @@ impl ScorpioManager {
         }
     }
 
-    /// Adds a mono file to the Scorpio manager's workspace.
     pub async fn mono_add(&self, mono_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         // The OS path cannot be used, and should be mapped from
         // the FUSE system to the path under Upper.
@@ -205,11 +218,11 @@ impl ScorpioManager {
         // What is needed here is a path relative to Upper, not a path
         // relative to the Workdir.
         let work_dir = self.select_work(mono_path)?;
-        let store_path = config::store_path();
-        let work_path = PathBuf::from(store_path).join(work_dir.hash.clone());
         let mono_path = PathBuf::from(mono_path)
             .strip_prefix(&work_dir.path)?
             .to_path_buf();
+        let store_path = config::store_path();
+        let work_path = PathBuf::from(store_path).join(work_dir.hash.clone());
 
         // Since index.db is the private space of the sled database,
         // we will combine it with objects to form a new working directory.

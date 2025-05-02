@@ -9,13 +9,14 @@ use mercury::hash::SHA1;
 use crate::internal::db::get_db_conn_instance;
 use crate::internal::model::reference;
 
+///标识一个分支，只需要知道分支的名称，分支最新提交，还有关联的远程
 #[derive(Debug)]
 pub struct Branch {
     pub name: String,
     pub commit: SHA1,
     pub remote: Option<String>,
 }
-
+//数据库查询某个分支，只要一条记录
 async fn query_reference(branch_name: &str, remote: Option<&str>) -> Option<reference::Model> {
     let db_conn = get_db_conn_instance().await;
     reference::Entity::find()
@@ -31,7 +32,7 @@ async fn query_reference(branch_name: &str, remote: Option<&str>) -> Option<refe
 }
 
 impl Branch {
-    /// list all remote branches
+    /// 查询数据库，根据分支名，返回所有可能的分支
     pub async fn list_branches(remote: Option<&str>) -> Vec<Self> {
         let db_conn = get_db_conn_instance().await;
 
@@ -56,12 +57,14 @@ impl Branch {
     }
 
     /// is the branch exists
+    /// 简单查询数据库进行判断
     pub async fn exists(branch_name: &str) -> bool {
         let branch = Self::find_branch(branch_name, None).await;
         branch.is_some()
     }
 
     /// get the branch by name
+    /// 就是简单的查看数据库，有这个分支就返回这个分支，必然是唯一的
     pub async fn find_branch(branch_name: &str, remote: Option<&str>) -> Option<Self> {
         let branch = query_reference(branch_name, remote).await;
         match branch {
@@ -77,6 +80,7 @@ impl Branch {
     /// search branch with full name, return vec of branches
     /// e.g. `origin/sub/master/feature` may means `origin/sub/master` + `feature` or `origin/sub` + `master/feature`
     /// so we need to search all possible branches
+    /// 搜索分支就会从远程里面找
     pub async fn search_branch(branch_name: &str) -> Vec<Self> {
         let mut branch_name = branch_name.to_string();
         let mut remote = String::new();
@@ -100,6 +104,7 @@ impl Branch {
         branches
     }
 
+    ///要么是从某次提交插入新的分支，要么是在指定分支进行提交
     pub async fn update_branch(branch_name: &str, commit_hash: &str, remote: Option<&str>) {
         let db_conn = get_db_conn_instance().await;
         // check if branch exists
@@ -125,7 +130,7 @@ impl Branch {
             }
         }
     }
-
+    //删除某个分支
     pub async fn delete_branch(branch_name: &str, remote: Option<&str>) {
         let db_conn = get_db_conn_instance().await;
         let branch: reference::ActiveModel =

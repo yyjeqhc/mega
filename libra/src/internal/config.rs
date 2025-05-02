@@ -12,7 +12,7 @@ use crate::internal::model::config::Model;
 use super::model::config::ActiveModel;
 
 pub struct Config;
-
+///origin https://...
 pub struct RemoteConfig {
     pub name: String,
     pub url: String,
@@ -26,6 +26,7 @@ pub struct BranchConfig {
 
 impl Config {
     // todo accept a db connect or a transaction from outside
+    ///数据库简单的插入一行
     pub async fn insert(configuration: &str, name: Option<&str>, key: &str, value: &str) {
         let db = get_db_conn_instance().await;
         let config = ActiveModel {
@@ -39,6 +40,7 @@ impl Config {
     }
 
     // Update one configuration entry in database using given configuration, name, key and value
+    ///数据库操作，更新一行
     pub async fn update(configuration: &str, name: Option<&str>, key: &str, value: &str) -> Model {
         let db = get_db_conn_instance().await;
         let mut config: ActiveModel = config::Entity::find()
@@ -57,6 +59,7 @@ impl Config {
         config.update(db).await.unwrap()
     }
 
+    ///数据库配置竟然可以重复，除了value不一样，根据这几个属性查询所有行
     async fn query(configuration: &str, name: Option<&str>, key: &str) -> Vec<Model> {
         let db = get_db_conn_instance().await;
         config::Entity::find()
@@ -72,6 +75,7 @@ impl Config {
     }
 
     /// Get one configuration value
+    /// 可能会有重复，但是只需要第一个
     pub async fn get(configuration: &str, name: Option<&str>, key: &str) -> Option<String> {
         let values = Self::query(configuration, name, key).await;
         values.first().map(|c| c.value.to_owned())
@@ -79,6 +83,8 @@ impl Config {
 
     /// Get remote repo name by branch name
     /// - You may need to `[branch::set-upstream]` if return `None`
+    /// libra branch --set-upstream-to=origin/master
+    /// 只是为了查看当前分支关联的远程value，也就是origin或者其他的东西
     pub async fn get_remote(branch: &str) -> Option<String> {
         // e.g. [branch "master"].remote = origin
         Config::get("branch", Some(branch), "remote").await
@@ -86,6 +92,7 @@ impl Config {
 
     /// Get remote repo name of current branch
     /// - `Error` if `HEAD` is detached
+    /// 查看当前分支的远程关联名称，返回remote_name origin，以便后面查询url
     pub async fn get_current_remote() -> Result<Option<String>, ()> {
         match Head::current().await {
             Head::Branch(name) => Ok(Config::get_remote(&name).await),
@@ -96,7 +103,21 @@ impl Config {
         }
     }
 
+    ///给定远程名称，查询实际的url。
+    /// 比如 origin ,返回https://...
     pub async fn get_remote_url(remote: &str) -> String {
+        println!("remote is {:?}", remote);
+        let a = Config::list_all().await;
+        for (k, v) in a {
+            println!("list {}: {}", k, v);
+        }
+        // let b = Config::branch_config(remote).await.unwrap();
+        // println!("{:?} {:?}",b.remote,b.name);
+        // let c = Config::all_remote_configs().await;
+        // for r in c {
+        //     println!("remote config: {} {}", r.name, r.url);
+        // }
+        // return "http://localhost:58001/".to_string();
         match Config::get("remote", Some(remote), "url").await {
             Some(url) => url,
             None => panic!("fatal: No URL configured for remote '{}'.", remote),
@@ -104,6 +125,7 @@ impl Config {
     }
 
     /// return `None` if no remote is set
+    /// 和get_current_remote配套使用，查看当前分支的远程，再查询远程实际的url
     pub async fn get_current_remote_url() -> Option<String> {
         match Config::get_current_remote().await.unwrap() {
             Some(remote) => Some(Config::get_remote_url(&remote).await),
@@ -113,6 +135,7 @@ impl Config {
 
     /// Get all configuration values
     /// - e.g. remote.origin.url can be multiple
+    /// 只是为了获取某个配置的所有值，如 remote.origin.url
     pub async fn get_all(configuration: &str, name: Option<&str>, key: &str) -> Vec<String> {
         Self::query(configuration, name, key)
             .await
@@ -122,6 +145,7 @@ impl Config {
     }
 
     /// Get literally all the entries in database without any filtering
+    /// 不做筛选，返回所有配置
     pub async fn list_all() -> Vec<(String, String)> {
         let db = get_db_conn_instance().await;
         config::Entity::find()
@@ -142,6 +166,7 @@ impl Config {
     }
 
     /// Delete one or all configuration using given key and value pattern
+    /// 删除某个配置项，必须是完全配置，比如remote.origin.url，参数是remote.url，就找不到
     pub async fn remove_config(
         configuration: &str,
         name: Option<&str>,
@@ -172,6 +197,7 @@ impl Config {
     // pub async fn remove_by_section(configuration: &str) {
     //     unimplemented!();
     // }
+    ///输入是origin这样的名称
     pub async fn remove_remote(name: &str) -> Result<(), String> {
         let db = get_db_conn_instance().await;
         let remote = config::Entity::find()
@@ -190,6 +216,8 @@ impl Config {
         Ok(())
     }
 
+    ///libra remote show 或者libra remote -v的时候，进行展示，
+    /// 但是，如果name为空，直接崩溃
     pub async fn all_remote_configs() -> Vec<RemoteConfig> {
         let db = get_db_conn_instance().await;
         let remotes = config::Entity::find()
@@ -197,28 +225,45 @@ impl Config {
             .all(db)
             .await
             .unwrap();
-        let remote_names = remotes
-            .iter()
-            .map(|remote| remote.name.as_ref().unwrap().clone())
-            .collect::<HashSet<String>>();
-
-        remote_names
-            .iter()
-            .map(|name| {
-                let url = remotes
-                    .iter()
-                    .find(|remote| remote.name.as_ref().unwrap() == name)
-                    .unwrap()
-                    .value
-                    .to_owned();
+        //有必要进行去重再遍历嘛，直接变量Vec就行了
+        //
+        remotes
+            .into_iter()
+            .map(|remote| {
                 RemoteConfig {
-                    name: name.to_owned(),
-                    url,
+                    //要考虑name为空，会直接崩溃
+                    name: remote.name.as_ref().unwrap().clone(),
+                    url: remote.value,
                 }
             })
             .collect()
+
+        // let remote_names = remotes
+        //     .iter()
+        //     .map(|remote| remote.name.as_ref().unwrap().clone())
+        //     .collect::<HashSet<String>>();
+
+        // remote_names
+        //     .iter()
+        //     .map(|name| {
+        //         let url = remotes
+        //             .iter()
+        //             .find(|remote| remote.name.as_ref().unwrap() == name)
+        //             .unwrap()
+        //             .value
+        //             .to_owned();
+        //         RemoteConfig {
+        //             name: name.to_owned(),
+        //             url,
+        //         }
+        //     })
+        //     .collect()
     }
 
+    ///fetch的时候使用，传入那么，比如origin
+    /// 是够应该更精确一点。如果不是remote.origin.url呢
+    /// 而是remote.origin.hello呢，因为不是使用remote add添加
+    /// 而是直接config添加，不过不会崩溃，也不影响
     pub async fn remote_config(name: &str) -> Option<RemoteConfig> {
         let db = get_db_conn_instance().await;
         let remote = config::Entity::find()
@@ -233,6 +278,9 @@ impl Config {
         })
     }
 
+    ///libra branch --set-upstream-to=origin/master
+    ///这样设置的话，确实只有两项
+    /// 输入参数是分支名称，返回查询到的branch配置
     pub async fn branch_config(name: &str) -> Option<BranchConfig> {
         let db = get_db_conn_instance().await;
         let config_entries = config::Entity::find()

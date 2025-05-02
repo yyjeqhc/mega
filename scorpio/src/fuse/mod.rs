@@ -6,7 +6,11 @@ use libfuse_fs::{
 use rfuse3::raw::{Filesystem, Request};
 use tokio::sync::Mutex;
 
+use crate::manager::fetch::fetch_code;
+use crate::manager::fetch::fetch_tree;
+use crate::manager::fetch::set_parent_commit;
 use crate::util::config as sconfig;
+use crate::util::GPath;
 use crate::{dicfuse::Dicfuse, manager::ScorpioManager};
 use std::{
     collections::HashMap,
@@ -70,6 +74,22 @@ impl MegaFuse {
         // mount user works.
         for dir in &manager.works {
             let _lower = PathBuf::from(store_path).join(&dir.hash);
+            if false {
+                let path = dir.path.to_owned();
+                let p = GPath::from(path);
+
+                let tree = fetch_tree(&p).await.unwrap();
+                println!(
+                    "new_from_manager fetch get the tree {:?}",
+                    tree.id.to_string()
+                );
+
+                let work_path = PathBuf::from(store_path).join(&dir.hash);
+                let _lower = work_path.join("lower");
+                fetch_code(&p, _lower).await.unwrap();
+
+                set_parent_commit(&work_path).await.unwrap();
+            }
             megafuse.overlay_mount(dir.node, &_lower).await.unwrap();
         }
 

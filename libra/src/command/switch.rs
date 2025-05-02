@@ -11,7 +11,28 @@ use super::{
     restore::{self, RestoreArgs},
     status,
 };
-
+/*
+#任何状态下，可以分离HEAD，不能是-d branch_name
+root@yyjeqhc:~/libtest# libra switch -d 6cf7
+root@yyjeqhc:~/libtest# libra log
+commit 6cf7f1dac5614cb930b4ab43de2b6f6d0a32c474 (HEAD)
+Author: mega <admin@mega.org>
+Date: 2025-05-02 01:34:34 UTC +0800
+#任何状态下，可以直接切换到分支，不能是分离的一次commit
+libra switch master
+#从HEAD所在位置创建分支并切换过去，默认就是HEAD
+root@yyjeqhc:~/libtest# libra switch --create n1
+root@yyjeqhc:~/libtest# libra log
+commit f1594fa3d74245b7eadbdcbaca9cc8f1fd4bf516 (HEAD -> n1)
+#从指定能识别的位置创建分支并切换过去，能识别的分支或者commit就可以
+root@yyjeqhc:~/libtest# libra switch --create n2 master
+root@yyjeqhc:~/libtest# libra log
+commit 6cf7f1dac5614cb930b4ab43de2b6f6d0a32c474 (HEAD -> n2)
+#从指定能识别的位置创建分支并切换过去，能识别的分支或者commit就可以
+root@yyjeqhc:~/libtest# libra switch --create n3 746b
+root@yyjeqhc:~/libtest# libra log
+commit 746be2d73fb08dd2e4930d142b853b131bcda851 (HEAD -> n3)
+*/
 #[derive(Parser, Debug)]
 pub struct SwitchArgs {
     /// branch name
@@ -84,7 +105,7 @@ async fn switch_to_commit(commit_hash: SHA1) {
     let head = Head::Detached(commit_hash);
     Head::update(head, None).await;
 }
-
+///切换到指定分支，优先本地，然后去远程查找
 async fn switch_to_branch(branch_name: String) {
     let target_branch = Branch::find_branch(&branch_name, None).await;
     if target_branch.is_none() {

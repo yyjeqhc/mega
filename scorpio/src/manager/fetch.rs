@@ -42,8 +42,10 @@ impl CheckHash for ScorpioManager {
         let mut handlers = Vec::new();
 
         for work in &mut self.works {
+            println!("check {:?}", work.path);
             // if the config hash is null or empty , mean that it's a new config work node path .
             if work.hash.is_empty() {
+                println!("check false");
                 let p = GPath::from(work.path.to_string());
                 // Get the tree and its hash value, for name dictionary .
                 let tree = fetch_tree(&p).await.unwrap();
@@ -52,6 +54,31 @@ impl CheckHash for ScorpioManager {
                 let store_path = config::store_path();
                 let _lower = PathBuf::from(store_path).join(&work.hash).join("lower");
                 handlers.push(tokio::spawn(async move { fetch_code(&p, _lower).await }));
+            }
+            if false {
+                let path = work.path.to_owned();
+                let p = GPath::from(path);
+                // Get the tree and its hash value, for name dictionary .
+                let tree = fetch_tree(&p).await.unwrap();
+                println!("check fetch get the tree {:?}", tree.id.to_string());
+                // let workdir = WorkDir {
+                //     path: p.to_string(),//mount文件夹下third-party/xxx
+                //     node: inode,
+                //     hash: tree.id.to_string(),
+                // };
+                // println!("path is {:?}",workdir.path);
+                //work.hash = tree.id.to_string();
+                // the lower path is store file path for remote code version .
+                let store_path = config::store_path();
+                let work_path = PathBuf::from(store_path).join(&work.hash);
+                let _lower = work_path.join("lower");
+                fetch_code(&p, _lower).await.unwrap();
+                // manager.works.push(workdir.clone());
+                // let config_file = config::config_file();
+                // let _ = manager.to_toml(config_file);
+                // Get the commit information of the previous version and
+                // write it into the commit file.
+                set_parent_commit(&work_path).await.unwrap();
             }
         }
         // if have new config path , finish all handlers and write back the config file
@@ -102,11 +129,13 @@ pub async fn fetch<P: AsRef<Path>>(
     let p = GPath::from(path);
     // Get the tree and its hash value, for name dictionary .
     let tree = fetch_tree(&p).await.unwrap();
+    println!("fetch get the tree {:?}", tree.id.to_string());
     let workdir = WorkDir {
-        path: p.to_string(),
+        path: p.to_string(), //mount文件夹下third-party/xxx
         node: inode,
         hash: tree.id.to_string(),
     };
+    println!("path is {:?}", workdir.path);
     //work.hash = tree.id.to_string();
     // the lower path is store file path for remote code version .
     let store_path = config::store_path();
@@ -215,6 +244,12 @@ async fn worker_ro_thread(
     path: GPath,
     send_tree: Sender<(GPath, Tree)>,
 ) {
+    println!("worker_ro_thread root_path {:?}", root_path.to_string());
+    println!("worker_ro_thread target_path {:?}", target_path);
+
+    println!("worker_ro_thread path {:?}", path.to_string());
+    println!("worker_ro_thread root_path {:?}", root_path.to_string());
+
     let tree = fetch_tree(&path).await.unwrap();
     trace!("path:{}", path);
     let _ = send_tree.send((path.clone(), tree.clone())).await;
@@ -224,6 +259,7 @@ async fn worker_ro_thread(
         let mut subpath = path.clone(); // New path ->  mono/repo/dirpath
         subpath.push(item.name);
         let real_path = target_path.join(subpath.part(root_path.path.len(), subpath.path.len()));
+        println!("real {:?}", real_path);
         if item.mode == TreeItemMode::Tree {
             {
                 let root_path = root_path.clone();
@@ -250,11 +286,16 @@ async fn worker_ro_thread(
 ///     monorepo path  -> Tree
 ///
 /// Download remote data to local and store it in Overlay format
-async fn fetch_code(path: &GPath, save_path: impl AsRef<Path>) -> std::io::Result<()> {
+pub async fn fetch_code(path: &GPath, save_path: impl AsRef<Path>) -> std::io::Result<()> {
     let target_path: Arc<PathBuf> = Arc::new(save_path.as_ref().to_path_buf());
 
     // Create the save_path directory if it doesn't exist
     tokio::fs::create_dir_all(&save_path).await?;
+    println!(
+        "fetch_code {:?} save_path {:?}",
+        path.to_string(),
+        target_path
+    );
     let rece;
     let handle;
     {
@@ -289,7 +330,8 @@ async fn fetch_code(path: &GPath, save_path: impl AsRef<Path>) -> std::io::Resul
 
 /// Get the previous version of the Commit information from the remote API,
 /// convert it into a Commit structure, and write it into the commit file.
-async fn set_parent_commit(work_path: &Path) -> std::io::Result<()> {
+pub async fn set_parent_commit(work_path: &Path) -> std::io::Result<()> {
+    println!("set_parent_commit {:?}", work_path);
     let parent_commit = match fetch_parent_commit().await {
         Ok(info) => info,
         Err(e) => {
@@ -393,6 +435,7 @@ pub async fn fetch_tree(path: &GPath) -> Result<Tree, Box<dyn std::error::Error>
 }
 
 /// Network operations, extracting parent commit Hash from HTTP byte streams
+/// 就是简单的发送一个请求，获取最新的 commit 信息
 pub async fn fetch_parent_commit() -> Result<Commit, Box<dyn std::error::Error>> {
     let url = format!("{}/api/v1/latest-commit", config::base_url());
     let response = reqwest::get(&url).await?;
