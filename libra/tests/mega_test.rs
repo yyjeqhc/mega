@@ -7,7 +7,6 @@ use reqwest::Url;
 use std::env;
 use std::net::TcpStream;
 use std::path::PathBuf;
-/// integration tests for the mega module
 use testcontainers::core::wait::HttpWaitStrategy;
 use testcontainers::{
     core::{IntoContainerPort, Mount, ReuseDirective, WaitFor},
