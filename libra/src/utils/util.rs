@@ -298,6 +298,7 @@ pub async fn get_commit_base(commit_base: &str) -> Result<SHA1, String> {
 
     let commits = storage.search(commit_base).await;
     if commits.is_empty() {
+        println!("empty is what");
         return Err(format!("fatal: invalid reference: {}", commit_base));
     } else if commits.len() > 1 {
         return Err(format!("fatal: ambiguous argument: {}", commit_base));
