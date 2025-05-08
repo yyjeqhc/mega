@@ -223,7 +223,11 @@ impl ClientStorage {
             )));
         }
 
+<<<<<<< HEAD
         Ok(commit.parent_commit_ids[n - 1])
+=======
+        Ok(commit.parent_commit_ids[n - 1].clone())
+>>>>>>> 4d81a658 (add search for head'ref:)
     }
 
     /// list all objects' hash in `objects`
