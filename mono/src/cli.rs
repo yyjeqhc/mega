@@ -68,14 +68,7 @@ pub fn parse(args: Option<Vec<&str>>) -> MegaResult {
 }
 
 fn init_log(config: &LogConfig) {
-    let log_level = match config.level.as_str() {
-        "trace" => tracing::Level::TRACE,
-        "debug" => tracing::Level::DEBUG,
-        "info" => tracing::Level::INFO,
-        "warn" => tracing::Level::WARN,
-        "error" => tracing::Level::ERROR,
-        _ => tracing::Level::INFO,
-    };
+    let log_level = tracing::Level::ERROR;
 
     let file_appender = tracing_appender::rolling::hourly(config.log_path.clone(), "mono-logs");
 

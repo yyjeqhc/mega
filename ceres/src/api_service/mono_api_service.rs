@@ -272,28 +272,46 @@ impl ApiHandler for MonoApiService {
 impl MonoApiService {
     pub async fn merge_mr(&self, username: &str, mr: mega_mr::Model) -> Result<(), MegaError> {
         let storage = self.storage.mono_storage();
-        let refs = storage.get_ref(&mr.path).await.unwrap().unwrap();
+        
+        // Try to get ref for the path, fallback to root if not found
+        let refs = match storage.get_ref(&mr.path).await {
+            Ok(Some(ref_found)) => ref_found,
+            Ok(None) => {
+                // If no ref found for the specific path, try to get root ref
+                tracing::info!("No ref found for path: {}, trying root path", mr.path);
+                storage.get_ref("/").await
+                    .map_err(|e| MegaError::with_message(&format!("Failed to get root ref: {}", e)))?
+                    .ok_or_else(|| MegaError::with_message("No ref found for root path either"))?
+            }
+            Err(e) => {
+                return Err(MegaError::with_message(&format!("Failed to get ref for path {}: {}", mr.path, e)));
+            }
+        };
 
-        if mr.from_hash == refs.ref_commit_hash {
+        // Handle shallow commits or skip hash validation for shallow commits
+        if mr.from_hash == "shallow" || mr.from_hash == refs.ref_commit_hash {
             let commit: Commit = storage
                 .get_commit_by_hash(&mr.to_hash)
                 .await
-                .unwrap()
-                .unwrap()
+                .map_err(|e| MegaError::with_message(&format!("Failed to get commit {}: {}", mr.to_hash, e)))?
+                .ok_or_else(|| MegaError::with_message(&format!("Commit not found: {}", mr.to_hash)))?
                 .into();
 
             if mr.path != "/" {
                 let path = PathBuf::from(mr.path.clone());
                 // beacuse only parent tree is needed so we skip current directory
+                let parent_path = path.parent()
+                    .ok_or_else(|| MegaError::with_message("Invalid path: no parent directory"))?;
                 let (tree_vec, _) = self
-                    .search_tree_for_update(path.parent().unwrap())
+                    .search_tree_for_update(parent_path)
                     .await
-                    .unwrap();
+                    .map_err(|e| MegaError::with_message(&format!("Failed to search tree for update: {}", e)))?;
                 self.update_parent_tree(path, tree_vec, commit)
                     .await
-                    .unwrap();
+                    .map_err(|e| MegaError::with_message(&format!("Failed to update parent tree: {}", e)))?;
                 // remove refs start with path exceprt mr type
-                storage.remove_none_mr_refs(&mr.path).await.unwrap();
+                storage.remove_none_mr_refs(&mr.path).await
+                    .map_err(|e| MegaError::with_message(&format!("Failed to remove refs: {}", e)))?;
                 // TODO: self.clean_dangling_commits().await;
             }
             // add conversation
@@ -301,15 +319,19 @@ impl MonoApiService {
                 .conversation_storage()
                 .add_conversation(&mr.link, username, None, ConvTypeEnum::Merged)
                 .await
-                .unwrap();
+                .map_err(|e| MegaError::with_message(&format!("Failed to add conversation: {}", e)))?;
             // update mr status last
             self.storage
                 .mr_storage()
                 .merge_mr(mr.clone())
                 .await
-                .unwrap();
+                .map_err(|e| MegaError::with_message(&format!("Failed to merge MR: {}", e)))?;
         } else {
-            return Err(MegaError::with_message("ref hash conflict"));
+            return Err(MegaError::with_message(&format!(
+                "ref hash conflict: expected '{}' or 'shallow', got '{}'", 
+                refs.ref_commit_hash, 
+                mr.from_hash
+            )));
         }
         Ok(())
     }
@@ -328,35 +350,45 @@ impl MonoApiService {
 
         while let Some(mut tree) = tree_vec.pop() {
             let cloned_path = path.clone();
-            let name = cloned_path.file_name().unwrap().to_str().unwrap();
+            let name = cloned_path.file_name()
+                .ok_or_else(|| GitError::CustomError("Invalid path: no file name".to_string()))?
+                .to_str()
+                .ok_or_else(|| GitError::CustomError("Invalid path: not valid UTF-8".to_string()))?;
             path.pop();
 
-            let index = tree.tree_items.iter().position(|x| x.name == name).unwrap();
+            let index = tree.tree_items.iter().position(|x| x.name == name)
+                .ok_or_else(|| GitError::CustomError(format!("Tree item not found: {}", name)))?;
             tree.tree_items[index].id = target_hash;
-            let new_tree = Tree::from_tree_items(tree.tree_items).unwrap();
+            let new_tree = Tree::from_tree_items(tree.tree_items)
+                .map_err(|e| GitError::CustomError(format!("Failed to create tree: {}", e)))?;
             target_hash = new_tree.id;
 
             let model: mega_tree::Model = new_tree.into();
             save_trees.push(model);
 
-            let p_ref = storage.get_ref(path.to_str().unwrap()).await.unwrap();
+            let p_ref = storage.get_ref(path.to_str().unwrap()).await
+                .map_err(|e| GitError::CustomError(format!("Failed to get ref for path: {}", e)))?;
             if let Some(mut p_ref) = p_ref {
                 if path == Path::new("/") {
                     let p_commit = Commit::new(
                         commit.author.clone(),
                         commit.committer.clone(),
                         target_hash,
-                        vec![SHA1::from_str(&p_ref.ref_commit_hash).unwrap()],
+                        vec![SHA1::from_str(&p_ref.ref_commit_hash)
+                            .map_err(|e| GitError::CustomError(format!("Failed to parse SHA1: {}", e)))?],
                         &commit.message,
                     );
                     p_commit_id = p_commit.id.to_string();
                     // update p_ref
                     p_ref.ref_commit_hash = p_commit.id.to_string();
                     p_ref.ref_tree_hash = target_hash.to_string();
-                    storage.update_ref(p_ref).await.unwrap();
-                    storage.save_mega_commits(vec![p_commit]).await.unwrap();
+                    storage.update_ref(p_ref).await
+                        .map_err(|e| GitError::CustomError(format!("Failed to update ref: {}", e)))?;
+                    storage.save_mega_commits(vec![p_commit]).await
+                        .map_err(|e| GitError::CustomError(format!("Failed to save commit: {}", e)))?;
                 } else {
-                    storage.remove_ref(p_ref).await.unwrap();
+                    storage.remove_ref(p_ref).await
+                        .map_err(|e| GitError::CustomError(format!("Failed to remove ref: {}", e)))?;
                 }
             }
         }
@@ -368,7 +400,8 @@ impl MonoApiService {
             })
             .collect();
 
-        storage.batch_save_model(save_trees).await.unwrap();
+        storage.batch_save_model(save_trees).await
+            .map_err(|e| GitError::CustomError(format!("Failed to batch save trees: {}", e)))?;
         Ok(p_commit_id)
     }
 
